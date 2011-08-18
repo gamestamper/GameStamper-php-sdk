@@ -19,6 +19,7 @@
  * License for the specific language governing permissions and limitations
  * under the License.
  */
+
 if (!function_exists('curl_init')) {
     throw new Exception('Gamestamper needs the CURL PHP extension.');
 }
@@ -32,8 +33,8 @@ if (!function_exists('json_decode')) {
  * @author Naitik Shah <naitik@facebook.com>
  * @modifications Keith Nordstrom <keith@gamestamper.com>
  */
-class GamestamperApiException extends Exception {
-
+class GamestamperApiException extends Exception
+{
     /**
      * The result from the API server that represents the exception information.
      */
@@ -109,7 +110,6 @@ class GamestamperApiException extends Exception {
 	}
 	return $str . $this->message;
     }
-
 }
 
 /**
@@ -122,11 +122,12 @@ class GamestamperApiException extends Exception {
  * @author Naitik Shah <naitik@facebook.com>
  * @modifications Keith Nordstrom <keith@gamestamper.com>
  */
-abstract class BaseGamestamper {
+abstract class BaseGamestamper
+{
     /**
      * Version.
      */
-    const VERSION = '3.0.1';
+    const VERSION = '3.1.1';
 
     /**
      * Default options for curl.
@@ -135,8 +136,9 @@ abstract class BaseGamestamper {
     CURLOPT_CONNECTTIMEOUT => 10,
     CURLOPT_RETURNTRANSFER => true,
     CURLOPT_TIMEOUT => 60,
-    CURLOPT_USERAGENT => 'gamestamper-php-3.0',
+    CURLOPT_USERAGENT	=> 'gamestamper-php-3.1',
     );
+    
     /**
      * List of query parameters that get automatically dropped when rebuilding
      * the current URL.
@@ -146,6 +148,7 @@ abstract class BaseGamestamper {
     'state',
     'signed_request',
     );
+
     /**
      * Maps aliases to Gamestamper domains.
      */
@@ -156,32 +159,38 @@ abstract class BaseGamestamper {
     'graph' => 'https://graph.gamestamper.com/',
     'www' => 'https://www.gamestamper.com/',
     );
+
     /**
      * The Application ID.
      *
      * @var string
      */
     protected $appId;
+    
     /**
      * The Application API Secret.
      *
      * @var string
      */
     protected $apiSecret;
+
     /**
      * The ID of the Gamestamper user, or 0 if the user is logged out.
      *
      * @var integer
      */
     protected $user;
+
     /**
      * The data from the signed_request token.
      */
     protected $signedRequest;
+
     /**
      * A CSRF state variable to assist in the defense against CSRF attacks.
      */
     protected $state;
+
     /**
      * The OAuth access token received in exchange for a valid authorization
      * code.  null means the access token has yet to be determined.
@@ -189,6 +198,7 @@ abstract class BaseGamestamper {
      * @var string
      */
     protected $accessToken = null;
+    
     /**
      * Indicates if the CURL based @ syntax for file uploads is enabled.
      *
@@ -216,9 +226,7 @@ abstract class BaseGamestamper {
 	if (isset($config['fileUpload'])) {
 	    $this->setFileUploadSupport($config['fileUpload']);
 	}
-	if (isset($_COOKIE[$this->getCSRFTokenCookieName()])) {
-	    $this->state = $_COOKIE[$this->getCSRFTokenCookieName()];
-	}
+
 	foreach ($this->DOMAIN_MAP as $k => $v) {
 	    $gsk = 'gs' . $k;
 	    $newValue = isset($_REQUEST[$gsk]) ? $_REQUEST[$gsk] : (isset($config[$gsk]) ? $config[$gsk] : null);
@@ -351,10 +359,22 @@ abstract class BaseGamestamper {
 	// the access token.
 	$signed_request = $this->getSignedRequest();
 	if ($signed_request) {
+	    // apps.gamestamper.com hands the access_token in the signed_request
 	    if (array_key_exists('oauth_token', $signed_request)) {
 		$access_token = $signed_request['oauth_token'];
 		$this->setPersistentData('access_token', $access_token);
 		return $access_token;
+	    }
+
+	    // the JS SDK puts a code in with the redirect_uri of ''
+	    if (array_key_exists('code', $signed_request)) {
+		$code = $signed_request['code'];
+		$access_token = $this->getAccessTokenFromCode($code, '');
+		if ($access_token) {
+		      $this->setPersistentData('code', $code);
+		      $this->setPersistentData('access_token', $access_token);
+		      return $access_token;
+		}
 	    }
 
 	    // signed request states there's no access token, so anything
@@ -385,19 +405,23 @@ abstract class BaseGamestamper {
 	return $this->getPersistentData('access_token');
     }
 
-    /**
-     * Get the data from a signed_request token.
-     *
-     * @return string The base domain
-     */
+  /**
+   * Retrieve the signed request, either from a request parameter or,
+   * if not present, from a cookie.
+   *
+   * @return string the signed request, if available, or null otherwise.
+   */
     public function getSignedRequest() {
 	if (!$this->signedRequest) {
 	    if (isset($_REQUEST['signed_request'])) {
 		$this->signedRequest = $this->parseSignedRequest(
 		$_REQUEST['signed_request']);
-		if (isset($this->signedRequest['oauth_token']))
-		    $this->signedRequest['access_token'] = $this->signedRequest['oauth_token'];
+	    } else if (isset($_COOKIE[$this->getSignedRequestCookieName()])) {
+		$this->signedRequest = $this->parseSignedRequest(
+		$_COOKIE[$this->getSignedRequestCookieName()]);
 	    }
+	    if (isset($this->signedRequest['oauth_token']))
+		    $this->signedRequest['access_token'] = $this->signedRequest['oauth_token'];
 	}
 	return $this->signedRequest;
     }
@@ -478,6 +502,12 @@ abstract class BaseGamestamper {
 	$this->establishCSRFTokenState();
 	$currentUrl = $this->getCurrentUrl();
 
+	// if 'scope' is passed as an array, convert to comma separated list
+	$scopeParams = isset($params['scope']) ? $params['scope'] : null;
+	if ($scopeParams && is_array($scopeParams)) {
+	    $params['scope'] = implode(',', $scopeParams);
+	}
+
 	$params = array_merge(array(
 	    'client_id' => $this->getAppId(),
 	    'redirect_uri' => $currentUrl, // possibly overwritten
@@ -548,6 +578,19 @@ abstract class BaseGamestamper {
 	} else {
 	    return call_user_func_array(array($this, '_graph'), $args);
 	}
+    }
+
+    /**
+    * Constructs and returns the name of the cookie that
+    * potentially houses the signed request for the app user.
+    * The cookie is not set by the BaseGamestamper class, but
+    * it may be set by the JavaScript SDK.
+    *
+    * @return string the name of the cookie that would house
+    *         the signed request value.
+    */
+    protected function getSignedRequestCookieName() {
+	return 'fbsr_'.$this->getAppId();
     }
 
     /**
@@ -631,9 +674,13 @@ abstract class BaseGamestamper {
      * @return mixed An access token exchanged for the authorization code, or
      *               false if an access token could not be generated.
      */
-    protected function getAccessTokenFromCode($code) {
+    protected function getAccessTokenFromCode($code, $redirect_uri = null) {
 	if (empty($code)) {
 	    return false;
+	}
+
+	if ($redirect_uri === null) {
+	    $redirect_uri = $this->getCurrentUrl();
 	}
 
 	try {
@@ -643,9 +690,9 @@ abstract class BaseGamestamper {
 	    $this->_oauthRequest(
 	    $this->getUrl('graph', '/oauth/access_token'),
 	    $params = array('client_id' => $this->getAppId(),
-	    'client_secret' => $this->getApiSecret(),
-	    'redirect_uri' => $this->getCurrentUrl(),
-	    'code' => $code));
+			'client_secret' => $this->getApiSecret(),
+			'redirect_uri' => $redirect_uri,
+			'code' => $code));
 	} catch (GamestamperApiException $e) {
 	    // most likely that user very recently revoked authorization.
 	    // In any event, we don't have an access token, so say so.
@@ -804,16 +851,6 @@ abstract class BaseGamestamper {
 	curl_close($ch);
 	return $result;
     }
-
-
-  /**
-   * The name of the cookie housing the CSRF protection value.
-   *
-   * @return String the cookie name
-   */
-  protected function getCSRFTokenCookieName() {
-    return 'fbcsrf_'.$this->getAppId();
-  }
   
     /**
      * Parses a signed_request and validates the signature.
@@ -952,7 +989,9 @@ abstract class BaseGamestamper {
      * @return string The current URL
      */
     protected function getCurrentUrl() {
-	$protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] == 'on' ? 'https://' : 'http://';
+	$protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] == 'on'
+	    ? 'https://' 
+	    : 'http://';
 	$currentUrl = $protocol . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
 	$parts = parse_url($currentUrl);
 
@@ -976,7 +1015,8 @@ abstract class BaseGamestamper {
 	$port =
 	isset($parts['port']) &&
 	(($protocol === 'http://' && $parts['port'] !== 80) ||
-	($protocol === 'https://' && $parts['port'] !== 443)) ? ':' . $parts['port'] : '';
+	($protocol === 'https://' && $parts['port'] !== 443))
+	? ':' . $parts['port'] : '';
 
 	// rebuild
 	return $protocol . $parts['host'] . $port . $parts['path'] . $query;
@@ -1030,6 +1070,7 @@ abstract class BaseGamestamper {
 	throw $e;
     }
 
+    
     /**
      * Prints to the error log if you aren't in command line mode.
      *
